@@ -163,6 +163,7 @@ class StorageEngine:
                 raise e
             res_json = json.loads(res.content.decode("utf-8"))
             if res_json["code"] == "0":
+                self.__logger.info("-----本次请求url————————————：%s " % path)
                 self.__logger.info("文件列表数量：“%s”" % res_json["result"]["data"])
                 files += res_json["result"]["data"]
                 total_num = int(res_json["result"]["pageBean"]["totalElements"])
@@ -391,9 +392,9 @@ class StorageEngine:
         """
         res_arr = list()
         dataset_id, dir_path = self.__get_source_dsid_path(tag)
-        self.__logger.info("------------开始filter_files-------------")
+        self.__logger.info("------------开始过滤需要的文件filter_files-------------")
         self.__filter_files(res_arr, dataset_id, dir_path, regex_str, recursion, by_abs_path)
-        self.__logger.info("------------结束filter_files-------------")
+        self.__logger.info("------------结束过滤filter_files-------------")
         file_arr = self.__process_list_res(dataset_id, res_arr, dir_path, keep_real)
         return file_arr
 

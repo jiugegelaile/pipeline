@@ -152,28 +152,34 @@ class AiPreLabeling:
         return json.dumps(combine_objs)
 
     def process_hash_result(self, redis_conn, se, batch_info: BatchInfo):
-
+        print("------ai执行完毕开始拉取redis信息并上传至数据平台结果-------")
         hash_arr = []
 
         for key in batch_info.res_key_d.values():
             hash_arr.append(redis_conn.hgetall(key))
-
+        print("------hash_arr: %s-------" % hash_arr)
         for key in hash_arr[0]:
+            print("------key: %s-------" % key)
             img_path = key.decode("utf8")
             img_json_arr = []
             for hash_t in hash_arr:
+                print("------hash_t: %s-------" % hash_t)
                 if hash_t[key].decode() == '' or hash_t[key].decode() is None:
                     json_obj = {"cv_task": 1, "obj_num": 0, "objects": []}
                 else:
                     json_obj = json.loads(hash_t[key].decode("utf8"))
                 img_json_arr.append(json_obj)
             name_start_pos = img_path.rindex("/") + 1
+            print("------name_start_pos: %s-------" % name_start_pos)
             file_name = img_path[name_start_pos:]
+            print("------file_name: %s-------" % file_name)
             name = file_name[:file_name.rindex(".")]
             res_json = self.combine_ai_obj(img_json_arr, name)
+            print("------res_json: %s-------" % res_json)
             content = bytes(res_json, encoding="utf8")
+            print("------content: %s-------" % content)
             file_abs_path = "%s/%s.json" % (LOCAL_DIR, name)
-
+            print("------file_abs_path: %s-------" % file_abs_path)
             with open(file_abs_path, "wb") as file:
                 file.write(content)
                 file.flush()
@@ -182,16 +188,17 @@ class AiPreLabeling:
             # redis_conn.sadd(REDIS_UPDATED_DOC_IDS, img_path)
 
     def process_ai_result(self, redis_conn, se, batch_info: BatchInfo):
-
+        print("--------执行ai处理后进行循环判断其是否运行完毕----")
         while True:
             ai_complete_num = 0
+            print("--------batch_info.progress_key_d.values() ：%s----" % batch_info.progress_key_d.values())
             for progress_key in batch_info.progress_key_d.values():
                 if redis_conn.exists(progress_key):
                     progress = int(redis_conn.get(progress_key).decode("utf8"))
                     if progress == batch_info.batch_size:
                         ai_complete_num += 1
             # logger.info("process_ai_result:  %s   %s" % (ai_complete_num, len(AI_JOB_INFO)))
-
+            print("----ai_complete_num%s---AI_JOB_INFO%s----" % (ai_complete_num, AI_JOB_INFO))
             if ai_complete_num == len(AI_JOB_INFO):
                 logger.info("第 %s 批次开始处理AI结果...." % batch_info.batch_id)
                 self.process_hash_result(redis_conn, se, batch_info)
@@ -222,38 +229,44 @@ class AiPreLabeling:
                 }""" % \
                   (redis_address, REDIS_PWD, REDIS_DB_INDEX, batch_info.images_key, redis_address, REDIS_PWD, REDIS_DB_INDEX,
                    batch_info.res_key_d[tag], batch_info.progress_key_d[tag])
-
+        print("---payload---- 处理的json %s" % payload)
         headers = {
             'Content-Type': 'application/json',
-            'token':ai_token
+            'token': ai_token
         }
         logger.info("--------------------headers:%s" % headers)
         try:
+            print("-------------ai--请求的url:%s" % url)
             response = requests.request("POST", url, headers=headers, data=payload)
             json_content = json.loads(response.content.decode('utf8'))
-            logger.info("start_ai_job:  %s %s %s" % (tag, json_content, response))
+            print("本次启动的ai预处理 信息： start_ai_job:  tag %s 返回结果：%s 返回%s" % (tag, json_content, response))
         except Exception as e:
             logger.info("AI 接口访问异常%s" % e)
 
     def start_ai_jobs(self, redis_conn, batch_info: BatchInfo):
+        print("----开始调用ai，进行预处理----")
         for key in AI_JOB_INFO:
             ai_times = int(redis_conn.incr(AI_JOB_INFO[key]["AI_TIMES_KEY"], 1))
             # ai_url = AI_JOB_INFO[key]["AI_URLS"][ai_times % len(AI_JOB_INFO[key]["AI_URLS"])]
             # ai_token = AI_JOB_INFO[key]["TOKEN"][ai_times % len(AI_JOB_INFO[key]["TOKEN"])]
             ai_url = AI_JOB_INFO[key]["AI_URLS"][0]
             ai_token = AI_JOB_INFO[key]["TOKEN"][0]
+            print("----key%s----ai_url%s---" % (key, ai_url))
             self.start_ai_job(redis_conn, batch_info, ai_url, ai_token, key)
 
     def process_batch(self, se, redis_conn, batch_info: BatchInfo, file_dict: dict):
         img_num = 0
         pull_img_start_time = time.time()
+        print("----将图片下载并放到redis上----")
         for image_path in file_dict:
             img_info = file_dict[image_path]
+            print("----image_path:%s----img_info:%s" % (image_path, img_info))
             # is_updated = redis_conn.sismember(REDIS_UPDATED_DOC_IDS, image_path)
             # if is_updated:
             #     continue
             logger.info("batch_id: %s, pull img: %s" % (batch_info.batch_id, image_path))
             local_path = "%s/%s" % (LOCAL_DIR, img_info["name"])
+            print("----local_path:%s---LOCAL_DIR%s--" % (local_path, LOCAL_DIR))
             se.download("A", image_path, LOCAL_DIR)
             file_con = open(local_path, mode="rb").read()
             print("==============================image_path:",image_path)
@@ -272,10 +285,14 @@ class AiPreLabeling:
     def init_batch_info(self, batch_info: BatchInfo):
         images_key = "%s_%s_imgs" % (batch_info.job_key, batch_info.batch_id)
         batch_info.images_key = images_key
+        print("images_key--- %s " % images_key)
         for key in AI_JOB_INFO:
+            print("--------key----%s" % key)
             result_key = "%s_%s_%s_result" % (batch_info.job_key, batch_info.batch_id, key)
+            print("第 %s 次 生成 result_key ：%s" % (batch_info.batch_id, result_key))
             batch_info.res_key_d[key] = result_key
             progress_key = "%s_%s_%s_progress" % (batch_info.job_key, batch_info.batch_id, key)
+            print("第 %s 次 生成 progress_key ：%s" % (batch_info.batch_id, progress_key))
             batch_info.progress_key_d[key] = progress_key
 
     def process_images(self, jpg_iter):
@@ -291,15 +308,17 @@ class AiPreLabeling:
         redis_conn = redis.Redis(host=REDIS_IP, port=REDIS_PORT, password=REDIS_PWD, db=REDIS_DB_INDEX)
 
         job_key = "task_" + str(uuid.uuid4())
-        logger.info(job_key)
+        print("本次执行的task的redis 的键是-----%s---" % job_key)
         redis_conn.delete(job_key)
 
-        logger.info("本 TASK 处理 %s 张照片。" % file_num)
+        print("本 TASK 处理 %s 张照片。" % file_num)
 
         ai_process = AiPreLabeling()
 
         batch_num = file_num / BATCH_SIZE + 1
+        print("----batch_num %s---" % batch_num)
         for batch_id in range(int(batch_num)):
+            print("----开始第 %s 批数据处理---" % batch_id)
             start_idx = batch_id * BATCH_SIZE
             end_idx = start_idx + BATCH_SIZE
             if end_idx > file_num:
@@ -309,9 +328,13 @@ class AiPreLabeling:
                 f_info = jpg_files[idx]
                 file_dict[f_info["path"]] = f_info
             batch_info = BatchInfo(batch_id, job_key)
+            print("第一步----初始化 key值---")
             ai_process.init_batch_info(batch_info)
+            print("第一步----初始化 key值完成---")
+            print("第二步----批处理数据上传---")
             ai_process.process_batch(se, redis_conn, batch_info, file_dict)
-            logger.info("第 %s 批处理完成。" % batch_info.batch_id)
+            print("第二步----批处理数据上传---")
+            print("第 %s 批处理完成，本次处理的开始index %s ,结束index %s " % (batch_info.batch_id, start_idx, end_idx))
 
         redis_conn.delete(job_key)
         return ["%s 张照片已完成" % file_num]
@@ -332,15 +355,15 @@ if __name__ == "__main__":
         kind = env_args['KIND']
         custom_code_property = env_args['CODE']
         label_type = env_args['TYPE']
-        logger.info("-------------env_args: % s" % env_args)
-        logger.info("-------------task_id: %s" % task_id)
+        print("------参数获取-------env_args: % s" % env_args)
+        print("-----参数获取--------task_id: %s" % task_id)
         se = StorageEngine(env_args["USERNAME"], env_args["PASSWORD"], env_args["TENANT_ID"], log_level='INFO')
         # se.set_source_info(source_info)
         # se.set_sink_info(sink_info)
         se.set_source_info({"A": {"name": "notebook", "datasetId": str(dataset_id), "path": "/" + str(dataset_id), "nodeType": 1}})
         se.set_sink_info({"name": "aa", "datasetId": str(dataset_id), "path": "/" + str(dataset_id), "nodeType": 1})
-        logger.info("---------source_info:%s" % source_info)
-        logger.info("----------sink_info:%s" % sink_info)
+        print("----参数获取-----source_info:%s" % source_info)
+        print("----参数获取------sink_info:%s" % sink_info)
 
 
         # kind = 1
@@ -351,8 +374,8 @@ if __name__ == "__main__":
         for i in custom_code_property:
             if "propertyList" in i.keys():
                 property_map[i["classCode"]] = i["propertyList"]
-        logger.info('-------------------custom code: %s' % CUSTOM_CODE)
-        logger.info('-------------------custom property :%s' % property_map)
+        print('---------参数获取----------custom code: %s' % CUSTOM_CODE)
+        print('---------参数获取----------custom property :%s' % property_map)
         # datased_id = "3219"
         # auth_token = 'eyJuYW1lIjoiY2xvdWRvcHNzZXJ2aWNlIiwidGltZXN0YW1wIjoiMTYwNzU4Njk2NzAzOSIsInV1aWQiOiJiMWFkZGZmOWNhODM0NDhiYjU0ODMxNTJmODBlZDhlYSIsInVzZXJJZCI6ImNiNDBlZjNmZDFhNjRlYTc4ZmM0NzgyYWQ0YWExYTNmMzg2MmIxNTlhZGFkNDVjZDgxMzI1MWVhNDQ1M2Y3YjMiLCJ1c2VybmFtZSI6ImRhdGFvcHMiLCJkaXNwbGF5bmFtZSI6ImRhdGFvcHM2MDc1NyIsInNpZ24iOiJaV0ppT0dVNU5EZGxOR1ZqTmpjM1l6VmxOV1l6WVdVeVpESXhORFppTmpVeVpqY3lNalk1TkE9PSJ9'
         # auth = 'gAAAAABf0dSWHqcfsk1PLR6sV-0UslTxbRT6iNmL2t7eIUeF3FjKZlaeAKNrjGgRbcAuA3iqJ498xJdRVSvT0HFtstq99CMvS7P4lOoQ7axr2KBJNiAbGa4YNucDy9UwGKvqyCzz1wCeVYkGB3ATVVw9j4ZJwf1OFnpfYimgQRvfrLq1HbBlHgA2ucVUDnHa-bSy5sMIZcrySyb-JPdRrcOLhdRYGrEI6Now3VUIiRwrm-fc8DcHljY'
@@ -361,7 +384,7 @@ if __name__ == "__main__":
         # se.set_sink_info({"name": "aa", "datasetId": "3219", "path": "/3219", "nodeType": 1})
 
         folders = se.list_fold("A")
-        logger.info("-----------------------folders: %s" % folders)
+        print("---------参数获取 该数据集下的文件夹--------------folders: %s" % folders)
 
 
 
@@ -378,7 +401,7 @@ if __name__ == "__main__":
         # 获取待处理的图片列表
 
         COMBINE_LABELING = False
-        logger.info("PySparkAILabeling--开始！！")
+        print("-----PySparkAILabeling--开始！！")
 
         # if len(jpg_files) != 0:
         #     AiPreLabeling().process_images(jpg_files)
@@ -395,10 +418,10 @@ if __name__ == "__main__":
             """图像预标注"""
             logger.info("------------图像预标注----------")
             jpg_files = se.list("A", recursion=True, regex_str=".*.jpg")
-            logger.info("-------------jpg_files:%s" % jpg_files)
+            print("------图片文件-------jpg_files:%s" % jpg_files)
 
             jpg_rdd = spark.sparkContext.parallelize(jpg_files, numSlices=3)
-            # logger.info("-----------jpg_rdd: %s " % jpg_rdd.collect())
+            print("-----------jpg_rdd: %s " % jpg_rdd.collect())
             res_rdd = jpg_rdd.mapPartitions(ai_pre_labeling.process_images)
             res_rdd.foreach(print)
             #os.rmdir(LOCAL_DIR)
